@@ -147,6 +147,11 @@ struct VulkanFeatures
 	{
 		VkBool32 shaderTerminateInvocation;
 	} vk13;
+
+	struct
+	{
+		VkBool32 pushDescriptor;
+	} vk14;
 };
 
 void *build_pnext_chain(VulkanFeatures &features, uint32_t api_version,
