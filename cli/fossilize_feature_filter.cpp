@@ -84,7 +84,8 @@ static void filter_feature_enablement(
 		const VkPhysicalDeviceFeatures2 *target_features)
 {
 	// These feature bits conflict according to validation layers.
-	if (features.fragment_shading_rate.pipelineFragmentShadingRate == VK_TRUE ||
+	// SLZ MODIFIED - fragmentDensityMap and pipelineFragmentShadingRate actually work together on Qualcomm's drivers for the Quest 2 & 3. We need this!
+	if (//features.fragment_shading_rate.pipelineFragmentShadingRate == VK_TRUE ||
 	    features.fragment_shading_rate.attachmentFragmentShadingRate == VK_TRUE ||
 	    features.fragment_shading_rate.primitiveFragmentShadingRate == VK_TRUE)
 	{
@@ -1249,6 +1250,13 @@ bool FeatureFilter::Impl::pnext_chain_is_supported(const void *pNext) const
 			break;
 		}
 
+		case VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_SHADING_RATE_IMAGE_STATE_CREATE_INFO_NV:
+		{
+			if (!features.shading_rate_nv.shadingRateImage)
+				return false;
+			break;
+		}
+
 		case VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR:
 		{
 			if (features.dynamic_rendering.dynamicRendering == VK_FALSE)
@@ -2110,6 +2118,8 @@ bool FeatureFilter::Impl::validate_spirv_extension(const std::string &ext) const
 	{
 		if (ext == mapping.spirv_ext)
 		{
+			if (ext == "SPV_GOOGLE_user_type")
+				return true;
 			if (mapping.promoted_core_version && api_version >= mapping.promoted_core_version)
 				return true;
 			if (enabled_extensions.count(mapping.vulkan_ext) != 0)

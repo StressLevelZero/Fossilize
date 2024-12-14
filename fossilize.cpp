@@ -166,6 +166,7 @@ struct DynamicStateInfo
 	bool fragment_shading_rate;
 	bool sample_locations;
 	bool line_stipple;
+	bool shading_rate_image_NV_enable;
 
 	// Dynamic state 3
 	bool tessellation_domain_origin;
@@ -201,6 +202,13 @@ struct DynamicStateInfo
 	bool coverage_reduction_mode;
 
 	bool depth_clamp_range;
+};
+
+struct ShadingRateImageStateCreateInfoNVSequential
+{
+	VkPipelineViewportShadingRateImageStateCreateInfoNV createInfo;
+	VkShadingRatePaletteNV shadingRatePalette;
+	VkShadingRatePaletteEntryNV shadingRateEntries[16]; // Technically the length of the array is determined by VkPhysicalDeviceShadingRateImagePropertiesNV.shadingRatePaletteSize, but every nvidia device has a limit of 16
 };
 
 static VkPipelineCreateFlags2KHR normalize_pipeline_creation_flags(VkPipelineCreateFlags2KHR flags)
@@ -342,6 +350,7 @@ struct StateReplayer::Impl
 	bool parse_attachment_reference_stencil_layout(const Value &state, VkAttachmentReferenceStencilLayout **out_info) FOSSILIZE_WARN_UNUSED;
 	bool parse_subpass_description_depth_stencil_resolve(const Value &state, VkSubpassDescriptionDepthStencilResolve **out_info) FOSSILIZE_WARN_UNUSED;
 	bool parse_fragment_shading_rate_attachment_info(const Value &state, VkFragmentShadingRateAttachmentInfoKHR **out_info) FOSSILIZE_WARN_UNUSED;
+	bool parse_shading_rate_image_NV_features(const Value &state, VkPhysicalDeviceShadingRateImageFeaturesNV** out_features) FOSSILIZE_WARN_UNUSED;
 	bool parse_pipeline_rendering_info(const Value &state, VkPipelineRenderingCreateInfoKHR **out_info) FOSSILIZE_WARN_UNUSED;
 
 	bool parse_pnext_chain_pdf2(const Value &pnext, void **out_pnext) FOSSILIZE_WARN_UNUSED;
@@ -365,6 +374,7 @@ struct StateReplayer::Impl
 	bool parse_discard_rectangles(const Value &state, VkPipelineDiscardRectangleStateCreateInfoEXT **out_info) FOSSILIZE_WARN_UNUSED;
 	bool parse_memory_barrier2(const Value &state, VkMemoryBarrier2KHR **out_info) FOSSILIZE_WARN_UNUSED;
 	bool parse_fragment_shading_rate(const Value &state, VkPipelineFragmentShadingRateStateCreateInfoKHR **out_info) FOSSILIZE_WARN_UNUSED;
+	bool parse_shading_rate_image_NV(const Value &state, VkPipelineViewportShadingRateImageStateCreateInfoNV** out_info) FOSSILIZE_WARN_UNUSED;
 	bool parse_sampler_ycbcr_conversion(const Value &state,
 	                                    VkSamplerYcbcrConversionCreateInfo **out_info) FOSSILIZE_WARN_UNUSED;
 	bool parse_graphics_pipeline_library(const Value &state, VkGraphicsPipelineLibraryCreateInfoEXT **out_info) FOSSILIZE_WARN_UNUSED;
@@ -515,6 +525,8 @@ struct StateRecorder::Impl
 	                        ScratchAllocator &alloc) FOSSILIZE_WARN_UNUSED;
 	void *copy_pnext_struct(const VkFragmentShadingRateAttachmentInfoKHR *create_info,
 	                        ScratchAllocator &alloc) FOSSILIZE_WARN_UNUSED;
+	void* copy_pnext_struct(const VkPipelineViewportShadingRateImageStateCreateInfoNV* create_info,
+							ScratchAllocator & alloc) FOSSILIZE_WARN_UNUSED;
 	void *copy_pnext_struct(const VkPipelineRenderingCreateInfoKHR *create_info,
 	                        ScratchAllocator &alloc,
 	                        VkGraphicsPipelineLibraryFlagsEXT state_flags) FOSSILIZE_WARN_UNUSED;
@@ -697,6 +709,14 @@ static void hash_pnext_struct(const StateRecorder *,
 	h.u32(info.pipelineFragmentShadingRate);
 	h.u32(info.primitiveFragmentShadingRate);
 	h.u32(info.attachmentFragmentShadingRate);
+}
+
+static void hash_pnext_struct(const StateRecorder*,
+                              Hasher& h,
+                              const VkPhysicalDeviceShadingRateImageFeaturesNV& info)
+{
+	h.u32(info.shadingRateImage);
+	h.u32(info.shadingRateCoarseSampleOrder);
 }
 
 static void hash_pnext_struct(const StateRecorder *,
@@ -903,6 +923,10 @@ static bool hash_pnext_chain_pdf2(const StateRecorder *recorder, Hasher &h, cons
 
 		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR:
 			hash_pnext_struct(recorder, h, *static_cast<const VkPhysicalDeviceFragmentShadingRateFeaturesKHR *>(pNext));
+			break;
+
+		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADING_RATE_IMAGE_FEATURES_NV:
+			hash_pnext_struct(recorder, h, *static_cast<const VkPhysicalDeviceShadingRateImageFeaturesNV*>(pNext));
 			break;
 
 		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT:
@@ -1295,6 +1319,30 @@ static bool hash_pnext_struct(const StateRecorder *,
 	return true;
 }
 
+static bool hash_pnext_struct(const StateRecorder*,
+	Hasher& h,
+	const VkPipelineViewportShadingRateImageStateCreateInfoNV& info)
+{
+	if (info.shadingRateImageEnable)
+	{
+		h.u32(info.viewportCount);
+		if (info.pShadingRatePalettes)
+		{
+			int numEntries = info.pShadingRatePalettes->shadingRatePaletteEntryCount;
+			h.u32(numEntries);
+			for (int i = 0; i < numEntries; i++)
+			{
+				h.s32(info.pShadingRatePalettes->pShadingRatePaletteEntries[i]);
+			}
+		}
+	}
+	else
+	{
+		h.u32(0);
+	}
+	return true;
+}
+
 static bool hash_pnext_struct(const StateRecorder *recorder,
                               Hasher &h,
                               const VkSubpassDescriptionDepthStencilResolve &info)
@@ -1478,6 +1526,31 @@ static void hash_pnext_struct(const StateRecorder *,
 	}
 }
 
+static void hash_pnext_struct(const StateRecorder*,
+	Hasher& h,
+	const VkPipelineViewportShadingRateImageStateCreateInfoNV& info,
+	const DynamicStateInfo* dynamic_state_info)
+{
+	if (info.shadingRateImageEnable)
+	{
+		h.u32(info.viewportCount);
+		if (info.pShadingRatePalettes)
+		{
+			int numEntries = info.pShadingRatePalettes->shadingRatePaletteEntryCount;
+			h.u32(numEntries);
+			for (int i = 0; i < numEntries; i++)
+			{
+				h.s32(info.pShadingRatePalettes->pShadingRatePaletteEntries[i]);
+			}
+		}
+	}
+	else
+	{
+		h.u32(0);
+	}
+	//return true;
+}
+
 static void hash_pnext_struct(const StateRecorder *,
                               Hasher &h,
                               const VkSamplerYcbcrConversionCreateInfo &info)
@@ -1646,6 +1719,10 @@ static bool hash_pnext_chain(const StateRecorder *recorder, Hasher &h, const voi
 
 		case VK_STRUCTURE_TYPE_PIPELINE_FRAGMENT_SHADING_RATE_STATE_CREATE_INFO_KHR:
 			hash_pnext_struct(recorder, h, *static_cast<const VkPipelineFragmentShadingRateStateCreateInfoKHR *>(pNext), dynamic_state_info);
+			break;
+
+		case VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_SHADING_RATE_IMAGE_STATE_CREATE_INFO_NV:
+			hash_pnext_struct(recorder, h, *static_cast<const VkPipelineViewportShadingRateImageStateCreateInfoNV*>(pNext), dynamic_state_info);
 			break;
 
 		case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO:
@@ -4730,6 +4807,32 @@ bool StateReplayer::Impl::parse_fragment_shading_rate(const Value &state,
 	return true;
 }
 
+// SLZ MODIFIED - Add legacy NV shading rate extension
+bool StateReplayer::Impl::parse_shading_rate_image_NV(const Value& state,
+	VkPipelineViewportShadingRateImageStateCreateInfoNV** out_info)
+{
+	auto* info = allocator.allocate_cleared<ShadingRateImageStateCreateInfoNVSequential>();
+	info->shadingRatePalette.pShadingRatePaletteEntries = info->shadingRateEntries;
+	info->createInfo.pShadingRatePalettes = &info->shadingRatePalette;
+
+	*out_info = static_cast<VkPipelineViewportShadingRateImageStateCreateInfoNV*>((void*)info);
+
+	info->createInfo.shadingRateImageEnable = state["shadingRateImageEnable"].GetBool();
+	info->createInfo.viewportCount = state["viewportCount"].GetUint();
+
+	// Could be null if shading rate is disabled
+	if (state.HasMember("pShadingRatePalettes"))
+	{
+		uint32_t numEntries = state["pShadingRatePalettes"]["shadingRatePaletteEntryCount"].GetUint();
+		info->shadingRatePalette.shadingRatePaletteEntryCount = min(numEntries, 16u);
+		for (uint32_t i = 0; i < numEntries; i++)
+			info->shadingRateEntries[i] = static_cast<VkShadingRatePaletteEntryNV>(state["pShadingRatePalettes"]["pShadingRatePaletteEntries"][i].GetInt());
+	}
+
+	return true;
+}
+
+
 bool StateReplayer::Impl::parse_sampler_ycbcr_conversion(const Value &state,
                                                          VkSamplerYcbcrConversionCreateInfo **out_info)
 {
@@ -5223,6 +5326,15 @@ bool StateReplayer::Impl::parse_pnext_chain(
 			break;
 		}
 
+		case VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_SHADING_RATE_IMAGE_STATE_CREATE_INFO_NV:
+		{
+			VkPipelineViewportShadingRateImageStateCreateInfoNV* shading_rate_NV = nullptr;
+			if (!parse_shading_rate_image_NV(next, &shading_rate_NV))
+				return false;
+			new_struct = reinterpret_cast<VkBaseInStructure*>(shading_rate_NV);
+			break;
+		}
+
 		case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO:
 		{
 			VkSamplerYcbcrConversionCreateInfo *conv = nullptr;
@@ -5433,6 +5545,18 @@ bool StateReplayer::Impl::parse_fragment_shading_rate_features(
 	return true;
 }
 
+bool StateReplayer::Impl::parse_shading_rate_image_NV_features(
+		const Value& state,
+		VkPhysicalDeviceShadingRateImageFeaturesNV** out_features)
+{
+	auto* features = allocator.allocate_cleared<VkPhysicalDeviceShadingRateImageFeaturesNV>();
+	*out_features = features;
+
+	features->shadingRateCoarseSampleOrder = state["shadingRateCoarseSampleOrder"].GetUint();
+	features->shadingRateImage = state["shadingRateImage"].GetUint();
+	return true;
+}
+
 bool StateReplayer::Impl::parse_mesh_shader_features(
 		const Value &state,
 		VkPhysicalDeviceMeshShaderFeaturesEXT **out_features)
@@ -5556,6 +5680,15 @@ bool StateReplayer::Impl::parse_pnext_chain_pdf2(const Value &pnext, void **outp
 			if (!parse_fragment_shading_rate_features(next, &fragment_shading_rate))
 				return false;
 			new_struct = reinterpret_cast<VkBaseInStructure *>(fragment_shading_rate);
+			break;
+		}
+
+		case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADING_RATE_IMAGE_FEATURES_NV:
+		{
+			VkPhysicalDeviceShadingRateImageFeaturesNV* shading_rate_image = nullptr;
+			if (!parse_shading_rate_image_NV_features(next, &shading_rate_image))
+				return false;
+			new_struct = reinterpret_cast<VkBaseInStructure*>(shading_rate_image);
 			break;
 		}
 
@@ -5890,6 +6023,28 @@ void *StateRecorder::Impl::copy_pnext_struct(const VkFragmentShadingRateAttachme
 	}
 
 	return resolve;
+}
+
+void *StateRecorder::Impl::copy_pnext_struct(const VkPipelineViewportShadingRateImageStateCreateInfoNV *create_info,
+                                             ScratchAllocator &alloc)
+{
+	auto* newData = alloc.allocate_n<ShadingRateImageStateCreateInfoNVSequential>(1);
+	if (newData)
+	{ 
+		newData->createInfo = *create_info;
+		
+		if (create_info->pShadingRatePalettes)
+		{
+			newData->createInfo.pShadingRatePalettes = &newData->shadingRatePalette;
+			newData->shadingRatePalette = *(create_info->pShadingRatePalettes);
+			newData->shadingRatePalette.pShadingRatePaletteEntries = newData->shadingRateEntries;
+			std::copy(create_info->pShadingRatePalettes->pShadingRatePaletteEntries,
+				create_info->pShadingRatePalettes->pShadingRatePaletteEntries + create_info->pShadingRatePalettes->shadingRatePaletteEntryCount,
+				newData->shadingRateEntries);
+		}
+
+	}
+	return newData;
 }
 
 void *StateRecorder::Impl::copy_pnext_struct(const VkPipelineRenderingCreateInfoKHR *create_info,
@@ -6250,6 +6405,13 @@ bool StateRecorder::Impl::copy_pnext_chain(const void *pNext, ScratchAllocator &
 		{
 			auto *ci = static_cast<const VkPipelineFragmentShadingRateStateCreateInfoKHR *>(pNext);
 			*ppNext = static_cast<VkBaseInStructure *>(copy_pnext_struct_simple(ci, alloc));
+			break;
+		}
+
+		case VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_SHADING_RATE_IMAGE_STATE_CREATE_INFO_NV:
+		{
+			auto* ci = static_cast<const VkPipelineViewportShadingRateImageStateCreateInfoNV*>(pNext);
+			*ppNext = static_cast<VkBaseInStructure*>(copy_pnext_struct_simple(ci, alloc));
 			break;
 		}
 
@@ -9378,6 +9540,32 @@ static bool json_value(const VkPipelineFragmentShadingRateStateCreateInfoKHR &cr
 }
 
 template <typename Allocator>
+static bool json_value(const VkPipelineViewportShadingRateImageStateCreateInfoNV& create_info, Allocator& alloc, Value* out_value,
+	const DynamicStateInfo* dynamic_state_info)
+{
+	Value value(kObjectType);
+	value.AddMember("sType", create_info.sType, alloc);
+	value.AddMember("shadingRateImageEnable", create_info.shadingRateImageEnable, alloc);
+	value.AddMember("viewportCount", create_info.viewportCount, alloc);
+	if (create_info.pShadingRatePalettes)
+	{
+		Value pShadingRatePalettes(kObjectType);
+		pShadingRatePalettes.AddMember("shadingRatePaletteEntryCount", create_info.pShadingRatePalettes->shadingRatePaletteEntryCount, alloc);
+		Value pShadingRatePaletteEntries(kArrayType);
+		int numEntries = create_info.pShadingRatePalettes->shadingRatePaletteEntryCount;
+		for (int i = 0; i < numEntries; i++)
+		{
+			pShadingRatePaletteEntries.PushBack(create_info.pShadingRatePalettes->pShadingRatePaletteEntries[i], alloc);
+		}
+		pShadingRatePalettes.AddMember("pShadingRatePaletteEntries", pShadingRatePaletteEntries, alloc);
+		value.AddMember("pShadingRatePalettes", pShadingRatePalettes, alloc);
+	}
+
+	*out_value = value;
+	return true;
+}
+
+template <typename Allocator>
 static bool json_value(const VkSamplerYcbcrConversionCreateInfo &create_info, Allocator &alloc, Value *out_value)
 {
 	Value value(kObjectType);
@@ -9761,6 +9949,11 @@ static bool pnext_chain_json_value(const void *pNext, Allocator &alloc, Value *o
 
 		case VK_STRUCTURE_TYPE_PIPELINE_FRAGMENT_SHADING_RATE_STATE_CREATE_INFO_KHR:
 			if (!json_value(*static_cast<const VkPipelineFragmentShadingRateStateCreateInfoKHR *>(pNext), alloc, &next, dynamic_state_info))
+				return false;
+			break;
+
+		case VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_SHADING_RATE_IMAGE_STATE_CREATE_INFO_NV:
+			if (!json_value(*static_cast<const VkPipelineViewportShadingRateImageStateCreateInfoNV*>(pNext), alloc, &next, dynamic_state_info))
 				return false;
 			break;
 
@@ -10769,6 +10962,17 @@ static bool json_value(const VkPhysicalDeviceFragmentShadingRateFeaturesKHR &cre
 	value.AddMember("pipelineFragmentShadingRate", uint32_t(create_info.pipelineFragmentShadingRate), alloc);
 	value.AddMember("primitiveFragmentShadingRate", uint32_t(create_info.primitiveFragmentShadingRate), alloc);
 	value.AddMember("attachmentFragmentShadingRate", uint32_t(create_info.attachmentFragmentShadingRate), alloc);
+	*out_value = value;
+	return true;
+}
+
+template <typename Allocator>
+static bool json_value(const VkPhysicalDeviceShadingRateImageFeaturesNV& create_info, Allocator& alloc, Value* out_value)
+{
+	Value value(kObjectType);
+	value.AddMember("sType", create_info.sType, alloc);
+	value.AddMember("shadingRateImage", uint32_t(create_info.shadingRateImage), alloc);
+	value.AddMember("shadingRateCoarseSampleOrder", uint32_t(create_info.shadingRateCoarseSampleOrder), alloc);
 	*out_value = value;
 	return true;
 }

@@ -5,3 +5,6 @@
 /cmake-build-release
 .idea
 *.iml
+/build-x64
+/build-android-arm64-v8a
+/out
