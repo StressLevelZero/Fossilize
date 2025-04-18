@@ -4817,7 +4817,7 @@ bool StateReplayer::Impl::parse_shading_rate_image_NV(const Value& state,
 
 	*out_info = static_cast<VkPipelineViewportShadingRateImageStateCreateInfoNV*>((void*)info);
 
-	info->createInfo.shadingRateImageEnable = state["shadingRateImageEnable"].GetBool();
+	info->createInfo.shadingRateImageEnable = state["shadingRateImageEnable"].GetUint();
 	info->createInfo.viewportCount = state["viewportCount"].GetUint();
 
 	// Could be null if shading rate is disabled
